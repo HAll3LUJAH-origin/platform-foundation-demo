@@ -1,0 +1,20 @@
+orders-api ({{ .Values.environment }}) deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "orders-api.fullname" . }}
+
+Port-forward and probe locally:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "orders-api.fullname" . }} 8080:{{ .Values.service.port }}
+  curl localhost:8080/healthz
+  curl localhost:8080/metrics
+
+{{- if .Values.config.debugEndpoints }}
+
+Debug endpoints are ENABLED in this environment. Trigger an alert drill:
+  curl "localhost:8080/debug/fail?rate=0.5&latency_ms=600"
+{{- end }}
+
+Rollback:
+  helm -n {{ .Release.Namespace }} rollback {{ .Release.Name }}

@@ -1,0 +1,88 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheusRule.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $env := .Values.environment }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "orders-api.fullname" . }}
+  labels:
+    {{- include "orders-api.labels" . | nindent 4 }}
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: orders-api.rules
+      rules:
+        # 5xx ratio — only fires with real traffic so a single error on an idle service doesn't page.
+        - alert: OrdersApiHighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="{{ $ns }}",status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{namespace="{{ $ns }}"}[5m]))
+            ) > 0.05
+            and
+            sum(rate(http_requests_total{namespace="{{ $ns }}"}[5m])) > 0.2
+          for: 5m
+          labels:
+            severity: {{ ternary "critical" "warning" (eq $env "stage") }}
+            environment: {{ $env | quote }}
+            service: orders-api
+          annotations:
+            summary: "orders-api 5xx error rate above 5% ({{ $env }})"
+            description: >-
+              More than 5% of requests are failing with 5xx over the last 5m.
+              This indicates the service is broken for a meaningful share of users.
+            runbook_url: "https://github.com/example/platform-foundation/blob/main/RUNBOOK.md#high-5xx-error-rate"
+
+        - alert: OrdersApiHighLatencyP99
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum(rate(http_request_duration_seconds_bucket{namespace="{{ $ns }}"}[5m])) by (le)
+            ) > 0.5
+            and
+            sum(rate(http_requests_total{namespace="{{ $ns }}"}[5m])) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+            environment: {{ $env | quote }}
+            service: orders-api
+          annotations:
+            summary: "orders-api p99 latency above 500ms ({{ $env }})"
+            description: >-
+              p99 request latency has exceeded 500ms for 10m. Users are
+              experiencing slow responses even if requests are not erroring.
+            runbook_url: "https://github.com/example/platform-foundation/blob/main/RUNBOOK.md#high-latency"
+
+        - alert: OrdersApiTargetDown
+          expr: |
+            up{namespace="{{ $ns }}",job=~".*orders-api.*"} == 0
+          for: 2m
+          labels:
+            severity: {{ ternary "critical" "warning" (eq $env "stage") }}
+            environment: {{ $env | quote }}
+            service: orders-api
+          annotations:
+            summary: "orders-api scrape target down ({{ $env }})"
+            description: >-
+              Prometheus has been unable to scrape orders-api for 2m. The
+              process may be crashing, OOMing, or unreachable.
+            runbook_url: "https://github.com/example/platform-foundation/blob/main/RUNBOOK.md#target-down"
+
+        - alert: OrdersApiNotEnoughReadyReplicas
+          expr: |
+            kube_deployment_status_replicas_available{namespace="{{ $ns }}",deployment="{{ include "orders-api.fullname" . }}"}
+            <
+            kube_deployment_spec_replicas{namespace="{{ $ns }}",deployment="{{ include "orders-api.fullname" . }}"}
+          for: 10m
+          labels:
+            severity: warning
+            environment: {{ $env | quote }}
+            service: orders-api
+          annotations:
+            summary: "orders-api has fewer ready replicas than desired ({{ $env }})"
+            description: >-
+              Available replicas have stayed below desired for 10m. Pods may be
+              failing readiness, stuck pending (no capacity), or crash-looping.
+            runbook_url: "https://github.com/example/platform-foundation/blob/main/RUNBOOK.md#not-enough-ready-replicas"
+{{- end }}

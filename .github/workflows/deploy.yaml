@@ -1,0 +1,82 @@
+name: deploy
+
+# Manual deploys only. The chosen GitHub Environment (dev|stage) carries its
+# own required-reviewers gate and its own scoped Kubernetes credentials, so a
+# dev token can never deploy to stage.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [dev, stage]
+        required: true
+      image_tag:
+        description: "Immutable image tag to deploy (e.g. sha-1a2b3c4)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # <- manual approval gate lives here
+    env:
+      NAMESPACE: orders-api-${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+
+      - name: configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          cat > "$HOME/.kube/config" <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: target
+            cluster:
+              server: ${{ secrets.KUBE_SERVER }}
+              certificate-authority-data: ${{ secrets.KUBE_CA_DATA }}
+          contexts:
+          - name: target
+            context:
+              cluster: target
+              namespace: ${NAMESPACE}
+              user: ci-deployer
+          current-context: target
+          users:
+          - name: ci-deployer
+            user:
+              token: ${{ secrets.KUBE_DEPLOYER_TOKEN }}
+          EOF
+          chmod 600 "$HOME/.kube/config"
+
+      - name: verify image tag is immutable (refuse 'latest')
+        run: |
+          if [[ "${{ inputs.image_tag }}" == "latest" || -z "${{ inputs.image_tag }}" ]]; then
+            echo "Refusing to deploy a mutable/empty tag."; exit 1
+          fi
+
+      - name: helm upgrade --install
+        run: |
+          helm upgrade --install orders-api helm/orders-api \
+            --namespace "$NAMESPACE" \
+            --values helm/orders-api/values-${{ inputs.environment }}.yaml \
+            --set image.tag=${{ inputs.image_tag }} \
+            --rollback-on-failure --timeout 5m
+
+      - name: wait for rollout
+        run: |
+          kubectl -n "$NAMESPACE" rollout status deploy/orders-api --timeout=180s
+
+      - name: post-deploy smoke check
+        run: |
+          kubectl -n "$NAMESPACE" run smoke-$RANDOM --rm -i --restart=Never \
+            --image=curlimages/curl:8.8.0 -- \
+            curl -fsS "http://orders-api.${NAMESPACE}.svc.cluster.local/healthz"

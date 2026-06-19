@@ -1,0 +1,78 @@
+{
+  "title": "orders-api",
+  "uid": "orders-api",
+  "schemaVersion": 39,
+  "timezone": "",
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "custom",
+        "query": "orders-api-dev,orders-api-stage",
+        "current": { "text": "orders-api-dev", "value": "orders-api-dev" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "req/s" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error ratio (5xx %)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] } } },
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{namespace=\"$namespace\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "5xx ratio" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency p50 / p95 / p99 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Ready vs desired replicas",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"orders-api\"}", "legendFormat": "available" },
+        { "expr": "kube_deployment_spec_replicas{namespace=\"$namespace\",deployment=\"orders-api\"}", "legendFormat": "desired" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Pod restarts (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "sum(rate(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[15m]))", "legendFormat": "restarts/s" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "CPU usage vs request",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"$namespace\",container=\"orders-api\"}[5m]))", "legendFormat": "used cores" },
+        { "expr": "sum(kube_pod_container_resource_requests{namespace=\"$namespace\",container=\"orders-api\",resource=\"cpu\"})", "legendFormat": "requested cores" }
+      ]
+    }
+  ]
+}

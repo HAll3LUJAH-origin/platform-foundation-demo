@@ -1,0 +1,32 @@
+# Dev overrides: cheap, permissive enough to drill alerts, fast feedback.
+environment: dev
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 48Mi
+  limits:
+    cpu: 200m
+    memory: 96Mi
+
+config:
+  warmup: "2s"
+  debugEndpoints: true     # enables /debug/fail so you can trigger alerts on demand
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+pdb:
+  enabled: false           # single replica in dev; PDB would block node drains
+
+topologySpreadConstraints:
+  enabled: false
+
+metrics:
+  serviceMonitor:
+    interval: 30s          # relax scrape pressure in dev

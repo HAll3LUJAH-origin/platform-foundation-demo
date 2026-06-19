@@ -1,0 +1,8 @@
+apiVersion: v2
+name: orders-api
+description: Minimal backend service for the platform foundation (dev/stage).
+type: application
+version: 0.1.0          # chart version
+appVersion: "0.1.0"     # default app version; overridden per-deploy by --set image.tag
+maintainers:
+  - name: platform-team

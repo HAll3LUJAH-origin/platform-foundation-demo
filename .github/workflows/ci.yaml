@@ -1,0 +1,136 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write       # push image to GHCR
+  security-events: write # upload Trivy SARIF
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/orders-api
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: app/go.sum
+
+      - name: go fmt check
+        working-directory: app
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go vet
+        working-directory: app
+        run: go vet ./...
+
+      - name: go test
+        working-directory: app
+        run: go test -race -count=1 ./...
+
+      - name: helm lint (dev + stage values)
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+      - run: |
+          helm lint helm/orders-api -f helm/orders-api/values-dev.yaml --set image.tag=ci
+          helm lint helm/orders-api -f helm/orders-api/values-stage.yaml --set image.tag=ci
+
+      - name: helm template renders (catches templating errors)
+        run: |
+          helm template orders-api helm/orders-api \
+            -f helm/orders-api/values-stage.yaml --set image.tag=ci > /dev/null
+
+      - name: terraform fmt + validate
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+      - run: |
+          terraform -chdir=infra/terraform/environments/dev fmt -check -recursive ../../
+          terraform -chdir=infra/terraform/environments/dev init -backend=false
+          terraform -chdir=infra/terraform/environments/dev validate
+          terraform -chdir=infra/terraform/environments/stage init -backend=false
+          terraform -chdir=infra/terraform/environments/stage validate
+
+      - name: tflint
+        uses: terraform-linters/setup-tflint@v4
+      - run: tflint --chdir=infra/terraform/modules/environment || true
+
+      - name: hadolint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/Dockerfile
+
+      - name: trivy config scan (IaC + k8s misconfig)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  build:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # sha-<short-sha> on every build; also tags semver if the ref is vX.Y.Z.
+      # latest is never deployed — this tag is convenience only.
+      - name: compute tags
+        id: meta
+        run: |
+          SHA="sha-$(git rev-parse --short HEAD)"
+          echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+          TAGS="$IMAGE:$SHA"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAGS="$TAGS,$IMAGE:${GITHUB_REF_NAME}"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: VERSION=${{ steps.meta.outputs.tag }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  scan:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/orders-api:${{ needs.build.outputs.tag }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          # Non-blocking for now — vulns surface in the Security tab.
+          # Flip to "1" when you want a hard gate.
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif

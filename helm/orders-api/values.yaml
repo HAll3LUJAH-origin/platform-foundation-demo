@@ -1,0 +1,108 @@
+# Defaults. Per-env differences go in values-dev.yaml / values-stage.yaml.
+
+environment: ""        # dev or stage — set per deployment
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/example/orders-api
+  tag: ""              # must be set at deploy time; empty fails the chart
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+containerPort: 8080
+
+config:
+  warmup: "5s"
+  debugEndpoints: false   # dev overrides this to true to allow alert drills
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  startup:
+    path: /healthz
+    periodSeconds: 3
+    failureThreshold: 10   # allow up to ~30s cold start before liveness kicks in
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  behavior:  # stabilization windows — avoids flapping on bursty traffic
+    scaleDown:
+      stabilizationWindowSeconds: 120
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+topologySpreadConstraints:  # single node loss shouldn't take the service down
+  enabled: true
+
+metrics:
+  enabled: true
+  path: /metrics
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  # PrometheusRule ships with the chart so alerts version with the code.
+  prometheusRule:
+    enabled: true
+
+# App-scoped NetworkPolicy; the namespace default-deny is owned by Terraform.
+networkPolicy:
+  enabled: true
+  allowFromNamespaces:
+    - ingress-nginx
+  allowMetricsFromNamespaces:
+    - monitoring
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

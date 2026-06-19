@@ -1,0 +1,93 @@
+# Admission-time enforcement — applies to kubectl applies too, not just CI.
+# Install Kyverno first, then: kubectl apply -f policy/kyverno-policies.yaml
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-and-empty-tag
+  annotations:
+    policies.kyverno.io/description: >-
+      Images must use an immutable tag. Blocks :latest and untagged images,
+      enforcing the tagging strategy at the cluster boundary.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-immutable-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["orders-api-*"]
+      validate:
+        message: "Images must use an immutable tag (sha-... or semver), not :latest or untagged."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest & *:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["orders-api-*"]
+      validate:
+        message: "Pods must set runAsNonRoot: true."
+        pattern:
+          spec:
+            =(securityContext):
+              =(runAsNonRoot): true
+            containers:
+              - =(securityContext):
+                  =(allowPrivilegeEscalation): false
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources-and-probes
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["orders-api-*"]
+      validate:
+        message: "Containers must declare CPU/memory requests and limits."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+    - name: require-probes
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["orders-api-*"]
+      validate:
+        message: "Containers must define liveness and readiness probes."
+        pattern:
+          spec:
+            containers:
+              - livenessProbe:
+                  "?*": "?*"
+                readinessProbe:
+                  "?*": "?*"

@@ -1,0 +1,51 @@
+# --- Secrets & state: never commit ---
+# Terraform state can contain secrets (tokens, generated passwords) in plaintext.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+
+# Variable files often hold environment-specific secrets/overrides.
+*.tfvars
+*.tfvars.json
+!example.tfvars        # keep redacted examples if you add them
+
+# Kubeconfigs grant cluster access.
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Local env files.
+.env
+.env.*
+!.env.example
+
+# SOPS / age / gpg material.
+*.agekey
+*.gpg
+secrets.dec.*
+
+# --- Terraform working dirs ---
+.terraform/
+.terraform.lock.hcl   # commit this if you want pinned providers; ignored here for sandbox portability
+.tfplan
+*.tfplan
+
+# --- Build / language artifacts ---
+/app/bin/
+*.exe
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Helm
+*.tgz
+charts/*.tgz
+
+# --- Editor / OS noise ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
